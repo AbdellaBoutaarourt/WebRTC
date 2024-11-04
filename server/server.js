@@ -1,6 +1,7 @@
 // server.js
 const express = require('express');
 const http = require('http');
+const { send } = require('process');
 const socketIo = require('socket.io');
 
 const app = express();
@@ -28,6 +29,9 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(5000, () => {
-  console.log('SERVER RUNNING');
+app.get('/', (req, res) => {
+  res.send('backend');
 });
+server.listen(5000, () => {
+  console.log("SERVER RUNNING");
+})
