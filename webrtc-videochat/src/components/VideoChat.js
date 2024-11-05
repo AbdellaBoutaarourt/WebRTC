@@ -1,142 +1,161 @@
-import React, { useEffect, useRef, useState } from 'react';
-import io from 'socket.io-client';
-import SimplePeer from 'simple-peer';
+// VideoChat.js
+import Button from '@mui/material/Button';
+import IconButton from "@mui/material/IconButton"
+import TextField from "@mui/material/TextField"
+import AssignmentIcon from "@mui/icons-material/Assignment"
+import PhoneIcon from "@mui/icons-material/Phone"
+import React, { useEffect, useRef, useState } from "react"
+import { CopyToClipboard } from "react-copy-to-clipboard"
+import Peer from "simple-peer"
+import io from "socket.io-client"
 
-const socket = io('http://localhost:5000');
+const socket = io.connect('http://localhost:5000');
 
-const VideoChat = ({ room }) => {
-    const [stream, setStream] = useState(null);
+function VideoChat() {
+    const [me, setMe] = useState("");
+    const [stream, setStream] = useState();
+    const [receivingCall, setReceivingCall] = useState(false);
+    const [caller, setCaller] = useState("");
+    const [callerSignal, setCallerSignal] = useState();
     const [callAccepted, setCallAccepted] = useState(false);
-    const [caller, setCaller] = useState(null);
-    const [users, setUsers] = useState([]);
+    const [idToCall, setIdToCall] = useState("");
+    const [callEnded, setCallEnded] = useState(false);
+    const [name, setName] = useState("");
+    const [callerName, setCallerName] = useState("");
 
     const myVideo = useRef();
     const userVideo = useRef();
     const connectionRef = useRef();
 
     useEffect(() => {
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-            .then((mediaStream) => {
-                setStream(mediaStream);
-                myVideo.current.srcObject = mediaStream;
-                console.log("Stream initialized:", mediaStream);
-                socket.emit('join-room', room);
-            })
-            .catch((err) => console.error("Error accessing media devices:", err));
-
-        socket.on('existing-users', (existingUsers) => {
-            console.log("Existing users in room:", existingUsers);
-            setUsers(existingUsers);
-
-            if (existingUsers.length > 1) {
-                const otherUserId = existingUsers.find((id) => id !== socket.id);
-                setCaller(otherUserId);
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+            setStream(stream);
+            if (myVideo.current) {
+                myVideo.current.srcObject = stream;
             }
         });
 
-        socket.on('signal', ({ signal, from }) => {
-            console.log("Received signal from:", from, signal);
-            setCaller(from);
-            if (signal) {
-                answerCall(signal);
-            } else {
-                console.log("No incoming signal to answer.");
-            }
+        socket.on("me", (id) => {
+            setMe(id);
         });
 
-        return () => {
-            socket.off('existing-users');
-            socket.off('signal');
-        };
-    }, [room]);
-
-    useEffect(() => {
-        if (caller && stream && !callAccepted) {
-            console.log("User Stream:", stream);
-            console.log("Caller:", caller);
-            console.log("Call Accepted:", callAccepted);
-            callUser(caller);
-        }
-    }, [stream, caller, callAccepted]);
-
-    const callUser = (userId) => {
-        if (!userId) {
-            console.log("No user ID provided for call.");
-            return;
-        }
-        if (!stream) {
-            console.log("No stream available for call.");
-            return;
-        }
-        console.log("Calling user:", userId);
-        const peer = new SimplePeer({ initiator: true, trickle: false, stream });
-
-        peer.on('signal', (data) => {
-            console.log("Sending signal to:", userId, data);
-            socket.emit('signal', { to: userId, signal: data });
+        socket.on("callUser", (data) => {
+            setReceivingCall(true);
+            setCaller(data.from);
+            setCallerName(data.name);
+            setCallerSignal(data.signal);
         });
+    }, []);
 
-        peer.on('stream', (userStream) => {
-            console.log("Received user stream:", userStream);
-            if (userStream.getVideoTracks().length > 0) {
-                userVideo.current.srcObject = userStream;
-            } else {
-                console.log("Le stream reçu ne contient pas de piste vidéo.");
-            }
+    const callUser = (id) => {
+        const peer = new Peer({
+            initiator: true,
+            trickle: false,
+            stream: stream
         });
-
+        peer.on("signal", (data) => {
+            socket.emit("callUser", {
+                userToCall: id,
+                signalData: data,
+                from: me,
+                name: name
+            });
+        });
+        peer.on("stream", (stream) => {
+            userVideo.current.srcObject = stream;
+        });
+        socket.on("callAccepted", (signal) => {
+            setCallAccepted(true);
+            peer.signal(signal);
+        });
 
         connectionRef.current = peer;
     };
 
-    const answerCall = (incomingSignal) => {
-        if (!incomingSignal) {
-            console.log("No incoming signal to answer.");
-            return;
-        }
+    const answerCall = () => {
         setCallAccepted(true);
-        const peer = new SimplePeer({ initiator: false, trickle: false, stream });
-
-        peer.on('signal', (data) => {
-            console.log("Sending signal to:", caller, data);
-            socket.emit('signal', { to: caller, signal: data });
+        const peer = new Peer({
+            initiator: false,
+            trickle: false,
+            stream: stream
+        });
+        peer.on("signal", (data) => {
+            socket.emit("answerCall", { signal: data, to: caller });
+        });
+        peer.on("stream", (stream) => {
+            userVideo.current.srcObject = stream;
         });
 
-        console.log("Answering call with signal:", incomingSignal);
-        peer.signal(incomingSignal);
-
-        peer.on('stream', (userStream) => {
-            console.log("Received user stream:", userStream);
-            if (userStream.getVideoTracks().length > 0) {
-                userVideo.current.srcObject = userStream;
-            } else {
-                console.log("Le stream reçu ne contient pas de piste vidéo.");
-            }
-        });
-
-
+        peer.signal(callerSignal);
         connectionRef.current = peer;
+    };
+
+    const leaveCall = () => {
+        setCallEnded(true);
+        connectionRef.current.destroy();
     };
 
     return (
-        <div className="flex flex-col items-center justify-center gap-4 p-6">
-            <h1 className="text-2xl font-bold mb-6">Room: {room}</h1>
-            <div className="flex gap-4">
-                <video playsInline muted ref={myVideo} autoPlay className="rounded-lg shadow-lg" />
-                {callAccepted ? (
-                    <video playsInline ref={userVideo} autoPlay className="rounded-lg shadow-lg" />
+        <>
+            <h1 className="text-center text-white text-3xl mb-4">Call</h1>
+            <div className="container mx-auto p-4 rounded-lg shadow-md">
+                <div className="video-container flex flex-col md:flex-row justify-center items-center">
+                    <div className="video mb-4 md:mr-4">
+                        {stream && (
+                            <video playsInline muted ref={myVideo} autoPlay className="w-64 h-auto rounded-lg shadow-lg" />
+                        )}
+                    </div>
+                    <div className="video mb-4">
+                        {callAccepted && !callEnded ? (
+                            <video playsInline ref={userVideo} autoPlay className="w-64 h-auto rounded-lg shadow-lg" />
+                        ) : null}
+                    </div>
+                </div>
+                <div className="myId text-center">
+                    <TextField
+                        id="filled-basic"
+                        label="Name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        className="mb-4 w-full"
+                    />
+                    <CopyToClipboard text={me}>
+                        <Button variant="contained" color="primary" startIcon={<AssignmentIcon fontSize="large" />} className="mb-4">
+                            Copy ID
+                        </Button>
+                    </CopyToClipboard>
+
+                    <TextField
+                        id="filled-basic"
+                        label="ID to call"
+                        value={idToCall}
+                        onChange={(e) => setIdToCall(e.target.value)}
+                        className="mb-4 w-full"
+                    />
+                    <div className="call-button flex justify-center items-center">
+                        {callAccepted && !callEnded ? (
+                            <Button variant="contained" color="secondary" onClick={leaveCall} className="mr-4">
+                                End Call
+                            </Button>
+                        ) : (
+                            <IconButton color="primary" aria-label="call" onClick={() => callUser(idToCall)} className="mr-4">
+                                <PhoneIcon fontSize="large" />
+                            </IconButton>
+                        )}
+                        <span className="text-black">{idToCall}</span>
+                    </div>
+                </div>
+                {receivingCall && !callAccepted ? (
+                    <div className="caller text-center mt-4">
+                        <h1 className="text-black text-xl">{callerName} is calling...</h1>
+                        <Button variant="contained" color="primary" onClick={answerCall} className="mt-2">
+                            Answer
+                        </Button>
+                    </div>
                 ) : null}
             </div>
-            <div className="mt-4">
-                <h2 className="text-xl font-semibold">Connected Users:</h2>
-                <ul>
-                    {users.map((user) => (
-                        <li key={user} className="text-lg">{user}</li>
-                    ))}
-                </ul>
-            </div>
-        </div>
+        </>
     );
-};
+}
 
 export default VideoChat;
