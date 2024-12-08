@@ -92,8 +92,41 @@ function VideoChat() {
 
     const leaveCall = () => {
         setCallEnded(true);
-        connectionRef.current.destroy();
+        setCallAccepted(false);
+        setIdToCall("");
+        setReceivingCall(false);
+        setCaller("");
+        setCallerSignal(null);
+
+        if (userVideo.current) {
+            userVideo.current.srcObject = null;
+        }
+
+        if (myVideo.current) {
+            myVideo.current.srcObject = null;
+        }
+
+        if (connectionRef.current) {
+            connectionRef.current.destroy();
+            connectionRef.current = null;
+        }
+
+        socket.emit("callEnded", me);
+
+        window.location.reload();
     };
+
+    useEffect(() => {
+        socket.on("callEnded", (callerId) => {
+            if (callerId !== me) {
+                window.location.reload();
+            }
+        });
+
+        return () => {
+            socket.off("callEnded");
+        };
+    }, [me]);
 
     return (
         <>
@@ -102,7 +135,7 @@ function VideoChat() {
                 <div className="video-container flex flex-col md:flex-row justify-center items-center">
                     <div className="video mb-4 md:mr-4">
                         {stream && (
-                            <video playsInline muted ref={myVideo} autoPlay className="w-64 h-auto rounded-lg shadow-lg" />
+                            <video ref={myVideo} autoPlay playsInline className="w-64 h-auto rounded-lg shadow-lg" />
                         )}
                     </div>
                     <div className="video mb-4">
